@@ -9,7 +9,6 @@ import type { AuthRepository, PasswordHasher } from "./auth/types.js";
 import { env } from "./config/env.js";
 import { errorHandler } from "./middleware/error-handler.js";
 import { originGuard } from "./middleware/origin-guard.js";
-import { healthRouter } from "./routes/health.js";
 import { prisma } from "./services/prisma.js";
 import { createPrismaPropertyRepository } from "./properties/prisma-repository.js";
 import { createPropertyRouter } from "./properties/routes.js";
@@ -30,6 +29,7 @@ import { ComplaintService, type ComplaintRepository } from "./complaints/service
 import { createDashboardRouter } from "./dashboard/routes.js";
 import { createPrismaDashboardRepository } from "./dashboard/prisma-repository.js";
 import { DashboardService, type DashboardRepository } from "./dashboard/service.js";
+import { createHealthRouter } from "./routes/health.js";
 
 interface CreateAppOptions {
   authRepository?: AuthRepository;
@@ -47,6 +47,7 @@ interface CreateAppOptions {
   complaintRepository?: ComplaintRepository;
   complaintAccess?: (complaintId: string) => Promise<TenantRecordAccess | null>;
   dashboardRepository?: DashboardRepository;
+  databaseCheck?: () => Promise<void>;
 }
 
 export function createApp(options: CreateAppOptions = {}) {
@@ -55,6 +56,8 @@ export function createApp(options: CreateAppOptions = {}) {
   const app = express();
 
   app.disable("x-powered-by");
+  // Do not trust forwarded headers until the production proxy topology is explicitly configured.
+  app.set("trust proxy", false);
   app.use(originGuard(webOrigin));
   app.use(cors({
     origin: webOrigin,
@@ -63,7 +66,9 @@ export function createApp(options: CreateAppOptions = {}) {
   }));
   app.use(express.json({ limit: "1mb" }));
   app.use(cookieParser());
-  app.use("/api/v1", healthRouter);
+  app.use("/api/v1", createHealthRouter(options.databaseCheck ?? (async () => {
+    await prisma.$queryRaw`SELECT 1`;
+  })));
   app.use("/api/v1/auth", createAuthRouter({
     repository: authRepository,
     passwords: options.passwordHasher ?? argon2PasswordHasher,

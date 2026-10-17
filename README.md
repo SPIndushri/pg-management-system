@@ -83,22 +83,49 @@ npm run dev:web
 
 - Web: <http://localhost:5173>
 - API health check: <http://localhost:4000/api/v1/health>
+- API database readiness: <http://localhost:4000/api/v1/health/ready>
 
-The health endpoint reports API process health; it does not claim that PostgreSQL is reachable.
+The liveness endpoint reports API process health. The readiness endpoint checks PostgreSQL and returns `503` without exposing connection errors when the database is unavailable.
 
 ## Environment variables
 
-The repository-root `.env` contains only `VITE_API_BASE_URL`. `api/.env` contains `DATABASE_URL`, `API_PORT`, `NODE_ENV`, and `WEB_ORIGIN`; use `.env.example` as its template.
+The repository-root `.env` contains only `VITE_API_BASE_URL`. `api/.env` contains `DATABASE_URL`, `API_PORT`, `NODE_ENV`, and `WEB_ORIGIN`; use `.env.example` as its development template. `NODE_ENV` must be set explicitly. Production API startup requires a PostgreSQL `DATABASE_URL` with TLS enabled and an explicit HTTPS `WEB_ORIGIN` containing only the frontend origin.
 
 | Variable | Purpose |
 | --- | --- |
 | `DATABASE_URL` | PostgreSQL connection string in `api/.env`, consumed by Prisma |
 | `API_PORT` | Express listen port (defaults to `4000`) |
-| `NODE_ENV` | Runtime mode |
-| `WEB_ORIGIN` | Exact trusted browser origin for CORS and unsafe-request origin checks (default `http://localhost:5173`) |
+| `NODE_ENV` | Required runtime mode: `development`, `test`, or `production` |
+| `WEB_ORIGIN` | Exact trusted browser origin for CORS and unsafe-request origin checks (development default `http://localhost:5173`; production must provide an HTTPS origin) |
 | `VITE_API_BASE_URL` | API base URL used by the browser; Vite variables are public |
 
 Never place real secrets in source control. `.env` is ignored by Git.
+
+The API validates production settings without including environment values in validation errors. Production requires `DATABASE_URL` to use PostgreSQL and `sslmode=require`, `verify-ca`, or `verify-full`; prefer `verify-full` when the managed provider supports it. Keep database credentials in the API hosting provider's server-side secret settings. Only `VITE_API_BASE_URL` belongs in the frontend build environment: Vite exposes variables with the `VITE_` prefix, and the frontend build must never receive `DATABASE_URL` or other server secrets.
+
+## Phase 6A deployment readiness
+
+No hosting provider or production environment has been selected or configured by this project. Complete these hosting-specific steps before calling a deployment production-ready:
+
+1. Provision a static frontend host, an API host, and managed PostgreSQL in a region/network with API-to-database connectivity. Configure the database to require TLS, restrict its network access to the API where possible, and take a managed backup before the first migration deployment.
+2. Configure HTTPS for both the frontend and API, with valid certificates. Set API `NODE_ENV=production`, `DATABASE_URL` to the provider's PostgreSQL TLS connection string, `WEB_ORIGIN` to the exact HTTPS frontend origin, and `API_PORT` only if the API host specifies a port other than the default `4000`. Do not set `WEB_ORIGIN` to an API URL or include a path.
+3. Build the frontend with `VITE_API_BASE_URL` set to the HTTPS API base URL, normally `https://<api-host>/api/v1`. This value is public and embedded in the frontend bundle. Do not pass the API `.env` file or database credentials to the frontend build.
+4. Build both workspaces from the repository root with `npm ci`, `npm run db:generate`, and `npm run build`. Publish the contents of `web/dist` to the static host and run the API using `npm --workspace api run start` (the compiled entry point is `api/dist/server.js`). Configure the static host to serve `index.html` for client-side routes.
+5. Apply reviewed migrations as a separate, controlled release step, before deploying API code that depends on them. From the repository root in PowerShell:
+
+   ```powershell
+   Push-Location api
+   npx prisma migrate deploy --schema=prisma/schema.prisma
+   Pop-Location
+   ```
+
+   Run this as a controlled deployment-job or one-off task in an environment where the API's server-side `DATABASE_URL` secret is available. The API does not run migrations automatically at startup. Do not use `prisma migrate dev` against production.
+6. Configure the API host's liveness probe to `GET /api/v1/health` and readiness probe to `GET /api/v1/health/ready`. Liveness is process-only; readiness runs a database query and returns `503` if PostgreSQL cannot be reached. The server attempts a database connection before listening and handles `SIGINT`/`SIGTERM` by closing the HTTP server and Prisma client.
+7. After release, verify liveness and readiness, load the frontend over HTTPS, confirm the browser's API requests use credentials and the exact `WEB_ORIGIN`, and test login, `/api/v1/auth/me`, a CSRF-protected logout, and public property browsing. Use an approved non-production test account for authenticated smoke checks; do not create or mutate production test data as part of this checklist.
+
+The Express app explicitly trusts no forwarded proxy headers (`trust proxy: false`). This is the safe default while the hosting topology is unknown. If the API is placed behind a reverse proxy, assess the host's documented proxy chain and configure a narrowly scoped trusted proxy before relying on client IPs or forwarded protocol headers; do not enable blanket proxy trust. The current login limiter is process-local and allows 10 attempts per client IP per 15 minutes. It is adequate only for a single API instance; multiple instances require a shared rate-limit store (for example, a Redis-backed store) and consistent trusted client-IP configuration. No external store has been added.
+
+These checks do not configure a host, DNS, TLS, secrets, firewall, database backups, proxy trust, shared rate limiting, monitoring, or rollback policy. Those remain deployment tasks and must be verified in the selected provider environment.
 
 ## Authentication and authorization
 
