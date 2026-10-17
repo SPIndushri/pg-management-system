@@ -21,6 +21,9 @@ import { createBookingRouter } from "./bookings/routes.js";
 import { createPrismaTenancyRepository } from "./tenancies/prisma-repository.js";
 import { createTenancyRouter } from "./tenancies/routes.js";
 import { TenancyService, type TenancyRepository } from "./tenancies/service.js";
+import { createPrismaBillingRepository } from "./billing/prisma-repository.js";
+import { createBillingRouter } from "./billing/routes.js";
+import { BillingService, type BillingRepository } from "./billing/service.js";
 
 interface CreateAppOptions {
   authRepository?: AuthRepository;
@@ -33,6 +36,8 @@ interface CreateAppOptions {
   bookingAccess?: (bookingId: string) => Promise<TenantRecordAccess | null>;
   tenancyRepository?: TenancyRepository;
   tenancyAccess?: (tenancyId: string) => Promise<TenantRecordAccess | null>;
+  billingRepository?: BillingRepository;
+  invoiceAccess?: (invoiceId: string) => Promise<TenantRecordAccess | null>;
 }
 
 export function createApp(options: CreateAppOptions = {}) {
@@ -71,6 +76,12 @@ export function createApp(options: CreateAppOptions = {}) {
     authRepository,
     options.tenancyAccess ?? ((tenancyId) => prismaResourceAccess.findTenancyAccess(tenancyId)),
     options.bookingAccess ?? ((bookingId) => prismaResourceAccess.findBookingAccess(bookingId)),
+  ));
+  app.use("/api/v1", createBillingRouter(
+    new BillingService(options.billingRepository ?? createPrismaBillingRepository(prisma)),
+    authRepository,
+    options.invoiceAccess ?? ((invoiceId) => prismaResourceAccess.findInvoiceAccess(invoiceId)),
+    options.tenancyAccess ?? ((tenancyId) => prismaResourceAccess.findTenancyAccess(tenancyId)),
   ));
   app.use((_request, response) => {
     response.status(404).json({ error: { code: "NOT_FOUND", message: "Route not found." } });

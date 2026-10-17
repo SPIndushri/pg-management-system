@@ -3,6 +3,7 @@ import { ZodError } from "zod";
 import { AuthenticationError } from "../auth/service.js";
 import { BookingWorkflowError } from "../bookings/service.js";
 import { TenancyWorkflowError } from "../tenancies/service.js";
+import { BillingWorkflowError } from "../billing/service.js";
 
 export const errorHandler: ErrorRequestHandler = (error, _request, response, _next) => {
   if (error instanceof AuthenticationError) {
@@ -16,6 +17,11 @@ export const errorHandler: ErrorRequestHandler = (error, _request, response, _ne
   }
 
   if (error instanceof TenancyWorkflowError) {
+    response.status(error.status).json({ error: { code: error.code, message: error.message } });
+    return;
+  }
+
+  if (error instanceof BillingWorkflowError) {
     response.status(error.status).json({ error: { code: error.code, message: error.message } });
     return;
   }

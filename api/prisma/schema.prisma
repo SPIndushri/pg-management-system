@@ -58,6 +58,15 @@ enum PaymentStatus {
   REFUNDED
 }
 
+enum ManualPaymentMethod {
+  CASH
+  BANK_TRANSFER
+  UPI
+  CARD
+  CHEQUE
+  OTHER
+}
+
 enum ComplaintStatus {
   OPEN
   IN_PROGRESS
@@ -213,6 +222,9 @@ model Payment {
   currencyCode      String        @db.Char(3)
   status            PaymentStatus @default(PENDING)
   providerReference String?       @unique @db.VarChar(200)
+  method            ManualPaymentMethod @default(OTHER)
+  reference         String?       @db.VarChar(200)
+  idempotencyKey    String?       @db.Uuid
   recordedAt        DateTime?     @db.Timestamptz(6)
   createdAt         DateTime      @default(now()) @db.Timestamptz(6)
   updatedAt         DateTime      @updatedAt @db.Timestamptz(6)
@@ -220,6 +232,7 @@ model Payment {
   invoice RentInvoice @relation(fields: [invoiceId], references: [id], onDelete: Restrict)
 
   @@index([invoiceId, status])
+  @@unique([invoiceId, idempotencyKey])
 }
 
 model Complaint {

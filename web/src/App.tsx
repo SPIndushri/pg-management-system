@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { Link, Route, Routes, useNavigate, useParams } from "react-router-dom";
 import { authApi, AuthApiError } from "./lib/auth-api";
@@ -9,6 +9,8 @@ import { bookingApi } from "./lib/booking-api";
 import type { Booking, BookingStatus } from "./lib/booking-api";
 import { tenancyApi } from "./lib/tenancy-api";
 import type { Tenancy } from "./lib/tenancy-api";
+import { billingApi } from "./lib/billing-api";
+import type { PaymentMethod, RentInvoice } from "./lib/billing-api";
 
 const field = "mt-1.5 w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-slate-900 outline-none focus:border-teal-700 focus:ring-2 focus:ring-teal-100";
 const button = "inline-flex items-center justify-center rounded-xl bg-teal-800 px-4 py-2.5 text-sm font-semibold text-white hover:bg-teal-700 disabled:cursor-wait disabled:opacity-60";
@@ -41,12 +43,13 @@ export default function App() {
     <header className="border-b border-slate-200 bg-white">
       <nav className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-5 py-4 sm:px-8">
         <Link className="text-xl font-bold tracking-tight text-teal-950" to="/">Staywise</Link>
-        <div className="flex items-center gap-3 text-sm">
+        <div className="flex flex-wrap items-center justify-end gap-3 text-sm">
           <Link className="font-medium text-slate-600 hover:text-teal-800" to="/">Find a stay</Link>
           {user && (user.role === "OWNER" || user.role === "ADMIN") && <Link className="font-medium text-slate-600 hover:text-teal-800" to="/manage">Owner dashboard</Link>}
           {user?.role === "TENANT" && <Link className="font-medium text-slate-600 hover:text-teal-800" to="/bookings">My bookings</Link>}
           {user?.role === "TENANT" && <Link className="font-medium text-slate-600 hover:text-teal-800" to="/tenancies">My tenancy</Link>}
-          {user && (user.role === "OWNER" || user.role === "ADMIN") && <><Link className="font-medium text-slate-600 hover:text-teal-800" to="/manage/bookings">Booking requests</Link><Link className="font-medium text-slate-600 hover:text-teal-800" to="/manage/tenancies">Tenancies</Link></>}
+          {user?.role === "TENANT" && <Link className="font-medium text-slate-600 hover:text-teal-800" to="/billing">Billing</Link>}
+          {user && (user.role === "OWNER" || user.role === "ADMIN") && <><Link className="font-medium text-slate-600 hover:text-teal-800" to="/manage/bookings">Booking requests</Link><Link className="font-medium text-slate-600 hover:text-teal-800" to="/manage/tenancies">Tenancies</Link><Link className="font-medium text-slate-600 hover:text-teal-800" to="/manage/rent">Rent</Link></>}
           {user ? <><span className="hidden text-slate-500 sm:inline">{user.fullName}</span><button className={secondary} onClick={logout} disabled={logoutBusy}>{logoutBusy ? "Signing out…" : "Sign out"}</button></> : <Link className={button} to="/login">Sign in</Link>}
         </div>
       </nav>
@@ -57,10 +60,12 @@ export default function App() {
       <Route path="/properties/:propertyId" element={<PublicDetailPage user={user} />} />
       <Route path="/bookings" element={<TenantBookings user={user} />} />
       <Route path="/tenancies" element={<TenantTenancies user={user} />} />
+      <Route path="/billing" element={<TenantBilling user={user} />} />
       <Route path="/login" element={<AuthPage onAuthenticated={setUser} />} />
       <Route path="/manage" element={<OwnerDashboard user={user} />} />
       <Route path="/manage/bookings" element={<OwnerBookings user={user} />} />
       <Route path="/manage/tenancies" element={<OwnerTenancies user={user} />} />
+      <Route path="/manage/rent" element={<OwnerRentManagement user={user} />} />
       <Route path="/manage/properties/:propertyId" element={<ManageProperty user={user} />} />
       <Route path="*" element={<main className="mx-auto max-w-5xl p-10"><h1 className="text-2xl font-semibold">Page not found</h1><Link to="/" className="mt-4 inline-block text-teal-800">Browse stays</Link></main>} />
     </Routes>
@@ -211,6 +216,60 @@ function OwnerTenancies({ user }: { user: AuthUser | null }) {
 
 function TenancyCard({ tenancy }: { tenancy: Tenancy }) {
   return <div className="flex flex-wrap items-start justify-between gap-4"><div><h2 className="text-lg font-bold">{tenancy.bed.room.property.name}</h2><p className="mt-1 text-sm text-slate-600">{tenancy.bed.room.property.city} · Room {tenancy.bed.room.roomNumber} · Bed {tenancy.bed.label}</p><p className="mt-2 text-sm text-slate-500">Booked interval: {tenancy.startDate.slice(0, 10)} to {tenancy.endDate?.slice(0, 10) ?? "open-ended"} (end exclusive)</p><p className="mt-1 text-sm text-slate-500">{tenancy.checkedInAt ? `Checked in ${new Date(tenancy.checkedInAt).toLocaleString()}` : "Check-in time unavailable"}{tenancy.checkedOutAt ? ` · Checked out ${new Date(tenancy.checkedOutAt).toLocaleString()}` : ""}</p></div><span className="rounded-full bg-slate-100 px-3 py-1.5 text-xs font-bold">{tenancy.status}</span></div>;
+}
+
+function TenantBilling({ user }: { user: AuthUser | null }) {
+  const [invoices, setInvoices] = useState<RentInvoice[]>([]); const [loading, setLoading] = useState(true); const [error, setError] = useState<string | null>(null);
+  const load = useCallback(() => { setLoading(true); setError(null); billingApi.tenantList().then(({ invoices: rows }) => setInvoices(rows)).catch((reason) => setError(errorMessage(reason))).finally(() => setLoading(false)); }, []);
+  useEffect(() => { if (user?.role === "TENANT") load(); else setLoading(false); }, [user, load]);
+  if (!user) return <AccessMessage title="Sign in to view your rent invoices" />;
+  if (user.role !== "TENANT") return <AccessMessage title="Tenant access required" />;
+  return <main className="mx-auto max-w-5xl px-5 py-10 sm:px-8"><p className="text-sm font-semibold text-teal-800">Tenant account</p><h1 className="mt-2 text-3xl font-bold">Rent billing</h1><p className="mt-2 text-slate-600">Review invoice periods, due dates, recorded payments and remaining balances.</p>{error && <ErrorPanel message={error} retry={load} />}{loading ? <Loading /> : invoices.length === 0 ? <Empty title="No rent invoices yet" body="Invoices for your tenancy will appear here when issued by the property owner." /> : <div className="mt-6 grid gap-4">{invoices.map((invoice) => <InvoiceSummary key={invoice.id} invoice={invoice} />)}</div>}</main>;
+}
+
+function OwnerRentManagement({ user }: { user: AuthUser | null }) {
+  const [invoices, setInvoices] = useState<RentInvoice[]>([]); const [tenancies, setTenancies] = useState<Tenancy[]>([]); const [loading, setLoading] = useState(true); const [error, setError] = useState<string | null>(null); const [notice, setNotice] = useState<string | null>(null); const [busy, setBusy] = useState(false);
+  const load = useCallback(() => {
+    setLoading(true); setError(null);
+    Promise.all([billingApi.ownerList(), tenancyApi.ownerList()]).then(([invoiceResult, tenancyResult]) => { setInvoices(invoiceResult.invoices); setTenancies(tenancyResult.tenancies); }).catch((reason) => setError(errorMessage(reason))).finally(() => setLoading(false));
+  }, []);
+  useEffect(() => { if (user && (user.role === "OWNER" || user.role === "ADMIN")) load(); else setLoading(false); }, [user, load]);
+  async function create(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault(); const form = event.currentTarget; const values = new FormData(form); setBusy(true); setError(null); setNotice(null);
+    try {
+      await billingApi.createInvoice(String(values.get("tenancyId")), { periodStart: String(values.get("periodStart")), periodEnd: String(values.get("periodEnd")), dueDate: String(values.get("dueDate")), amount: String(values.get("amount")), currencyCode: String(values.get("currencyCode")) });
+      form.reset(); setNotice("Invoice issued. The tenant can now see it on their billing page."); load();
+    } catch (reason) { setError(errorMessage(reason)); }
+    finally { setBusy(false); }
+  }
+  if (!user) return <AccessMessage title="Sign in to manage rent" />;
+  if (user.role !== "OWNER" && user.role !== "ADMIN") return <AccessMessage title="Owner access required" />;
+  const eligible = tenancies.filter((tenancy) => tenancy.status === "ACTIVE" || tenancy.status === "ENDED");
+  return <main className="mx-auto max-w-7xl px-5 py-10 sm:px-8"><p className="text-sm font-semibold text-teal-800">Owner workspace</p><h1 className="mt-2 text-3xl font-bold">Rent management</h1><p className="mt-2 text-slate-600">Issue tenancy invoices and record manually received payments. Entries are not gateway-verified.</p>{notice && <p className="mt-4 rounded-xl bg-emerald-50 p-4 text-sm text-emerald-900" role="status">{notice}</p>}{error && <ErrorPanel message={error} retry={load} />}
+    <div className="mt-7 grid items-start gap-6 xl:grid-cols-[.75fr_1.25fr]"><section className={`${card} space-y-4`}><h2 className="text-xl font-bold">Issue a rent invoice</h2>{loading ? <Loading /> : eligible.length === 0 ? <Empty title="No eligible tenancies" body="Check in a tenant before issuing an invoice." /> : <form onSubmit={create} className="space-y-3"><label className="block text-sm font-medium">Tenancy<select name="tenancyId" className={field} required defaultValue=""><option value="" disabled>Select a tenancy</option>{eligible.map((tenancy) => <option key={tenancy.id} value={tenancy.id}>{tenancy.bed.room.property.name} · {tenancy.tenant.fullName} · Room {tenancy.bed.room.roomNumber}, bed {tenancy.bed.label}</option>)}</select></label><div className="grid gap-3 sm:grid-cols-2"><label className="text-sm font-medium">Period start<input className={field} name="periodStart" type="date" required defaultValue={utcDate()} /></label><label className="text-sm font-medium">Period end (exclusive)<input className={field} name="periodEnd" type="date" required defaultValue={utcDate(30)} /></label><label className="text-sm font-medium">Due date<input className={field} name="dueDate" type="date" required defaultValue={utcDate(7)} /></label><label className="text-sm font-medium">Amount<input className={field} name="amount" type="number" min="0.01" max="9999999999.99" step="0.01" required placeholder="15000.00" /></label><label className="text-sm font-medium sm:col-span-2">Currency code<input className={field} name="currencyCode" defaultValue="INR" pattern="[A-Za-z]{3}" maxLength={3} required /></label></div><button className={button} disabled={busy}>{busy ? "Issuing…" : "Issue invoice"}</button></form>}</section>
+      <section><h2 className="mb-4 text-xl font-bold">Invoices and balances</h2>{loading ? <Loading /> : invoices.length === 0 ? <Empty title="No invoices yet" body="Issued invoices will appear here with payment history and balances." /> : <div className="grid gap-4">{invoices.map((invoice) => <OwnerInvoiceCard key={invoice.id} invoice={invoice} refresh={load} />)}</div>}</section></div>
+  </main>;
+}
+
+function OwnerInvoiceCard({ invoice, refresh }: { invoice: RentInvoice; refresh: () => void }) {
+  const [busy, setBusy] = useState(false); const [error, setError] = useState<string | null>(null); const [notice, setNotice] = useState<string | null>(null); const keys = useRef(new Map<string, string>());
+  async function record(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault(); const form = event.currentTarget; const values = new FormData(form);
+    const input = { amount: String(values.get("amount")), paymentDate: String(values.get("paymentDate")), method: String(values.get("method")) as PaymentMethod, reference: String(values.get("reference") ?? "").trim() || undefined };
+    const signature = JSON.stringify(input); const idempotencyKey = keys.current.get(signature) ?? crypto.randomUUID(); keys.current.set(signature, idempotencyKey);
+    setBusy(true); setError(null); setNotice(null);
+    try { const result = await billingApi.recordPayment(invoice.id, { ...input, idempotencyKey }); keys.current.delete(signature); form.reset(); setNotice(result.repeated ? "This payment was already recorded." : "Payment recorded and balance updated."); refresh(); }
+    catch (reason) { setError(errorMessage(reason)); }
+    finally { setBusy(false); }
+  }
+  return <article className={card}><InvoiceSummary invoice={invoice} /><p className="mt-3 text-sm text-slate-700">Tenant: {invoice.tenancy.tenant.fullName} · {invoice.tenancy.tenant.email}</p>{notice && <p className="mt-3 text-sm text-emerald-800" role="status">{notice}</p>}{error && <p className="mt-3 text-sm text-red-700" role="alert">{error}</p>}
+    {invoice.status !== "PAID" && invoice.status !== "VOID" && <form onSubmit={record} className="mt-4 grid items-end gap-3 rounded-xl bg-slate-50 p-4 sm:grid-cols-2 xl:grid-cols-5"><label className="text-sm font-medium">Payment amount<input name="amount" className={field} type="number" min="0.01" max={invoice.balanceDue} step="0.01" required /></label><label className="text-sm font-medium">Payment date<input name="paymentDate" className={field} type="date" max={utcDate()} required defaultValue={utcDate()} /></label><label className="text-sm font-medium">Method<select name="method" className={field}><option value="CASH">Cash</option><option value="BANK_TRANSFER">Bank transfer</option><option value="UPI">UPI</option><option value="CARD">Card</option><option value="CHEQUE">Cheque</option><option value="OTHER">Other</option></select></label><label className="text-sm font-medium">Reference (optional)<input name="reference" className={field} maxLength={200} /></label><button className={button} disabled={busy}>{busy ? "Recording…" : "Record payment"}</button></form>}
+  </article>;
+}
+
+function InvoiceSummary({ invoice }: { invoice: RentInvoice }) {
+  return <><div className="flex flex-wrap items-start justify-between gap-4"><div><h3 className="text-lg font-bold">{invoice.tenancy.bed.room.property.name} · {invoice.currencyCode} {invoice.amount}</h3><p className="mt-1 text-sm text-slate-600">Room {invoice.tenancy.bed.room.roomNumber} · Bed {invoice.tenancy.bed.label}</p><p className="mt-2 text-sm text-slate-500">Period {invoice.periodStart.slice(0, 10)} to {invoice.periodEnd.slice(0, 10)} (end exclusive) · Due {invoice.dueDate.slice(0, 10)}</p><p className="mt-2 text-sm font-semibold">Paid {invoice.currencyCode} {invoice.amountPaid} · Outstanding {invoice.currencyCode} {invoice.balanceDue}</p></div><span className="rounded-full bg-slate-100 px-3 py-1.5 text-xs font-bold">{invoice.status}</span></div>
+    <div className="mt-4 border-t border-slate-200 pt-3"><h4 className="text-sm font-bold">Payment history</h4>{invoice.payments.length === 0 ? <p className="mt-2 text-sm text-slate-500">No payments recorded.</p> : <ul className="mt-2 space-y-2">{invoice.payments.map((payment) => <li key={payment.id} className="flex flex-wrap justify-between gap-2 text-sm"><span>{payment.currencyCode.trim()} {payment.amount} · {payment.method.replaceAll("_", " ")} · {payment.status === "SUCCEEDED" ? "Manually recorded" : payment.status}</span><span className="text-slate-500">{payment.recordedAt ? payment.recordedAt.slice(0, 10) : "Date unavailable"}{payment.reference ? ` · Ref ${payment.reference}` : ""}</span></li>)}</ul>}</div></>;
 }
 
 function ManageProperty({ user }: { user: AuthUser | null }) {

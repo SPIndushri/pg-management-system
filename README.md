@@ -4,7 +4,7 @@ A portfolio project for managing paying guest accommodations. The web app and fu
 
 ## Project status
 
-Phases 1 and 2 provide the web/API foundations and initial PostgreSQL schema. Phase 3 adds registration, login, cookie-backed sessions, logout, current-user lookup, validation, rate limiting, and reusable authorization middleware. Phase 4A adds property, room and bed management plus public property browsing. Phase 4B adds tenant booking requests and owner decisions. Rent billing logic, payment-provider integration, notifications, and the Flutter app are not implemented yet.
+Phases 1 and 2 provide the web/API foundations and initial PostgreSQL schema. Phase 3 adds registration, login, cookie-backed sessions, logout, current-user lookup, validation, rate limiting, and reusable authorization middleware. Phase 4A adds property, room and bed management plus public property browsing. Phase 4B adds tenant booking requests and owner decisions. Phase 4C adds booking check-in and tenancy lifecycle features. Phase 4D adds rent invoices and manually recorded payments; gateway integration, complaints, notifications, and Flutter remain deferred.
 
 ## Prerequisites
 
@@ -205,6 +205,31 @@ Remove-Item Env:RUN_DB_INTEGRATION_TESTS
 
 The integration suite covers concurrent booking approval and tenancy check-in on one bed, idempotent conversion, active-tenancy conflicts, adjacent ranges and PostgreSQL exclusion constraints.
 
+## Rent invoices and payment tracking (Phase 4D)
+
+The existing `RentInvoice` model already has decimal amounts and a unique constraint on `(tenancyId, periodStart)`, which prevents duplicate invoices for a billing-period start. Invoice creation is available for `ACTIVE` or `ENDED` tenancies, and the billing period must be non-empty and lie within the tenancy's agreed date interval. New invoices are issued immediately; amounts use PostgreSQL `DECIMAL(12,2)` and are handled as decimal strings/Prisma Decimal values, not JavaScript floating-point arithmetic.
+
+| Method and path | Purpose |
+| --- | --- |
+| `GET /api/v1/invoices` | List the signed-in tenant's invoices and payment histories. |
+| `GET /api/v1/invoices/:invoiceId` | Read an invoice belonging to the signed-in tenant. |
+| `GET /api/v1/owner/invoices` | List invoices for the signed-in owner's properties (`ADMIN` sees all). |
+| `GET /api/v1/owner/invoices/:invoiceId` | Read an authorized invoice and its payment history. |
+| `POST /api/v1/owner/tenancies/:tenancyId/invoices` | Issue an invoice for an eligible, authorized tenancy. |
+| `POST /api/v1/owner/invoices/:invoiceId/payments` | Record a partial or full manual payment. |
+
+Invoice creation takes `periodStart`, `periodEnd`, `dueDate`, `amount` (a decimal string with up to two fractional digits) and a three-letter `currencyCode`. Tenant and owner IDs, invoice status and balances are server-derived. Duplicate billing-period starts return `409 DUPLICATE_INVOICE`.
+
+Payment recording takes a positive decimal amount, `paymentDate` (`YYYY-MM-DD`, not in the future), a method (`CASH`, `BANK_TRANSFER`, `UPI`, `CARD`, `CHEQUE` or `OTHER`), an optional reference and a UUID `idempotencyKey`. Payment currency comes from the invoice. The server appends the payment as a manually recorded `SUCCEEDED` entry, recalculates paid and outstanding amounts with decimal arithmetic, and updates invoice status to `ISSUED`, `OVERDUE` or `PAID`. This status means that an authorized owner entered the payment; it does not represent external gateway verification. Payment entries cannot be edited or deleted through the API.
+
+All billing writes require an owner/admin session and CSRF validation. Owners are scoped to their properties; tenants can only read invoices for their own tenancy; admins follow the existing all-property policy. Resource IDs belonging to another tenant or owner are concealed with `404`. Payment requests lock the invoice row using `SELECT ... FOR UPDATE`, then re-read the invoice and payment history in the transaction before checking outstanding balance. Concurrent requests therefore serialize against the same balance. Reusing the same per-invoice idempotency key and identical payment details returns the existing result; reusing it with different details returns `409`.
+
+The forward-only migration `20261017170000_rent_payments` adds a manual payment method enum, optional reference, per-invoice idempotency key with a unique database index, and database checks for positive amounts and valid invoice periods. The existing unique invoice constraint is preserved. Earlier migrations were not changed. There is no payment gateway integration in this phase.
+
+The owner rent interface is at `/manage/rent`; tenant billing is at `/billing`. Both use the existing cookie session and CSRF-aware request pattern, and display payment dates, methods, references and balances. The owner interface creates invoices and appends payments; the tenant page is read-only.
+
+The PostgreSQL integration suite also checks duplicate billing periods, partial/full payments, exact balances, idempotent retries and concurrent overpayment attempts. Enable it with `RUN_DB_INTEGRATION_TESTS=1` using the PowerShell instructions above.
+
 ## Checks
 
 ```powershell
@@ -212,7 +237,7 @@ npm test
 npm run build
 ```
 
-Vitest/Supertest tests cover health, authentication/session security, role and ownership authorization, property/room/bed endpoints, booking lifecycle, validation, cancellation rules, conflict responses, and availability. The standard API suite uses in-memory repositories; the optional booking concurrency suite requires the configured PostgreSQL database. Prisma Client generation is `npm run db:generate`; migrations are applied with `npm run db:migrate` in development or `npx prisma migrate deploy --schema=prisma/schema.prisma` from `api/` when applying reviewed migrations without creating new ones.
+Vitest/Supertest tests cover health, authentication/session security, role and ownership authorization, property/room/bed endpoints, booking and tenancy lifecycles, invoice/payment validation and access isolation, balances, overpayments and retries. The standard API suite uses in-memory repositories; the optional booking and billing integration suites require the configured PostgreSQL database. Prisma Client generation is `npm run db:generate`; migrations are applied with `npm run db:migrate` in development or `npx prisma migrate deploy --schema=prisma/schema.prisma` from `api/` when applying reviewed migrations without creating new ones. The web workspace has a production build but no configured automated test script.
 
 ## Architecture notes
 
@@ -225,6 +250,6 @@ Vitest/Supertest tests cover health, authentication/session security, role and o
 
 ## Next phases
 
-1. Add rent invoice and complaint workflows with owner/tenant scoping.
+1. Add complaint workflows with owner/tenant scoping.
 2. Add server-verified payment-provider integration.
 3. Add notification delivery, Flutter app, deployment guidance, and broader test coverage.
