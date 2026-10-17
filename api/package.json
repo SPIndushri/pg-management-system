@@ -7,7 +7,7 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/server.js",
     "test": "vitest run",
-    "test:integration": "vitest run src/bookings/concurrency.integration.test.ts src/billing/payments.integration.test.ts",
+    "test:integration": "vitest run src/bookings/concurrency.integration.test.ts src/billing/payments.integration.test.ts src/complaints/complaints.integration.test.ts",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev"
   },

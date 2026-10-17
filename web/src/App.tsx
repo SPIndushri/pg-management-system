@@ -11,6 +11,7 @@ import { tenancyApi } from "./lib/tenancy-api";
 import type { Tenancy } from "./lib/tenancy-api";
 import { billingApi } from "./lib/billing-api";
 import type { PaymentMethod, RentInvoice } from "./lib/billing-api";
+import { OwnerMaintenancePage, TenantComplaintsPage } from "./complaints-pages";
 
 const field = "mt-1.5 w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-slate-900 outline-none focus:border-teal-700 focus:ring-2 focus:ring-teal-100";
 const button = "inline-flex items-center justify-center rounded-xl bg-teal-800 px-4 py-2.5 text-sm font-semibold text-white hover:bg-teal-700 disabled:cursor-wait disabled:opacity-60";
@@ -49,7 +50,8 @@ export default function App() {
           {user?.role === "TENANT" && <Link className="font-medium text-slate-600 hover:text-teal-800" to="/bookings">My bookings</Link>}
           {user?.role === "TENANT" && <Link className="font-medium text-slate-600 hover:text-teal-800" to="/tenancies">My tenancy</Link>}
           {user?.role === "TENANT" && <Link className="font-medium text-slate-600 hover:text-teal-800" to="/billing">Billing</Link>}
-          {user && (user.role === "OWNER" || user.role === "ADMIN") && <><Link className="font-medium text-slate-600 hover:text-teal-800" to="/manage/bookings">Booking requests</Link><Link className="font-medium text-slate-600 hover:text-teal-800" to="/manage/tenancies">Tenancies</Link><Link className="font-medium text-slate-600 hover:text-teal-800" to="/manage/rent">Rent</Link></>}
+          {user?.role === "TENANT" && <Link className="font-medium text-slate-600 hover:text-teal-800" to="/complaints">Maintenance</Link>}
+          {user && (user.role === "OWNER" || user.role === "ADMIN") && <><Link className="font-medium text-slate-600 hover:text-teal-800" to="/manage/bookings">Booking requests</Link><Link className="font-medium text-slate-600 hover:text-teal-800" to="/manage/tenancies">Tenancies</Link><Link className="font-medium text-slate-600 hover:text-teal-800" to="/manage/rent">Rent</Link><Link className="font-medium text-slate-600 hover:text-teal-800" to="/manage/maintenance">Maintenance</Link></>}
           {user ? <><span className="hidden text-slate-500 sm:inline">{user.fullName}</span><button className={secondary} onClick={logout} disabled={logoutBusy}>{logoutBusy ? "Signing out…" : "Sign out"}</button></> : <Link className={button} to="/login">Sign in</Link>}
         </div>
       </nav>
@@ -61,11 +63,13 @@ export default function App() {
       <Route path="/bookings" element={<TenantBookings user={user} />} />
       <Route path="/tenancies" element={<TenantTenancies user={user} />} />
       <Route path="/billing" element={<TenantBilling user={user} />} />
+      <Route path="/complaints" element={<TenantComplaintsPage user={user} />} />
       <Route path="/login" element={<AuthPage onAuthenticated={setUser} />} />
       <Route path="/manage" element={<OwnerDashboard user={user} />} />
       <Route path="/manage/bookings" element={<OwnerBookings user={user} />} />
       <Route path="/manage/tenancies" element={<OwnerTenancies user={user} />} />
       <Route path="/manage/rent" element={<OwnerRentManagement user={user} />} />
+      <Route path="/manage/maintenance" element={<OwnerMaintenancePage user={user} />} />
       <Route path="/manage/properties/:propertyId" element={<ManageProperty user={user} />} />
       <Route path="*" element={<main className="mx-auto max-w-5xl p-10"><h1 className="text-2xl font-semibold">Page not found</h1><Link to="/" className="mt-4 inline-block text-teal-800">Browse stays</Link></main>} />
     </Routes>

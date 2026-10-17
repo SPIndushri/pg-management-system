@@ -1,0 +1,65 @@
+import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { Link } from "react-router-dom";
+import type { AuthUser } from "./lib/auth-api";
+import { complaintApi } from "./lib/complaint-api";
+import type { Complaint, ComplaintCategory, ComplaintPriority, ComplaintStatus } from "./lib/complaint-api";
+import { tenancyApi } from "./lib/tenancy-api";
+import type { Tenancy } from "./lib/tenancy-api";
+
+const field = "mt-1.5 w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-slate-900 outline-none focus:border-teal-700 focus:ring-2 focus:ring-teal-100";
+const button = "inline-flex items-center justify-center rounded-xl bg-teal-800 px-4 py-2.5 text-sm font-semibold text-white hover:bg-teal-700 disabled:opacity-60";
+const secondary = "inline-flex items-center justify-center rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50";
+const card = "rounded-2xl border border-slate-200 bg-white p-5 shadow-sm";
+const categories: ComplaintCategory[] = ["PLUMBING", "ELECTRICAL", "CLEANING", "WIFI", "FURNITURE", "OTHER"];
+const statuses: ComplaintStatus[] = ["OPEN", "IN_PROGRESS", "RESOLVED", "CLOSED"];
+const priorities: ComplaintPriority[] = ["LOW", "NORMAL", "HIGH", "URGENT"];
+const messageOf = (error: unknown) => error instanceof Error ? error.message : "The request could not be completed.";
+const label = (value: string) => value.replaceAll("_", " ").toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
+
+export function TenantComplaintsPage({ user }: { user: AuthUser | null }) {
+  const [items, setItems] = useState<Complaint[]>([]); const [tenancies, setTenancies] = useState<Tenancy[]>([]); const [loading, setLoading] = useState(true); const [error, setError] = useState(""); const [success, setSuccess] = useState(""); const [busy, setBusy] = useState(false);
+  const load = useCallback(async () => { setLoading(true); setError(""); try { const [complaints, tenancyResult] = await Promise.all([complaintApi.tenantList(), tenancyApi.tenantList()]); setItems(complaints.complaints); setTenancies(tenancyResult.tenancies.filter((t) => t.status === "ACTIVE")); } catch (e) { setError(messageOf(e)); } finally { setLoading(false); } }, []);
+  useEffect(() => { if (user?.role === "TENANT") void load(); }, [user, load]);
+  async function submit(event: FormEvent<HTMLFormElement>) { event.preventDefault(); const element = event.currentTarget; const form = new FormData(element); setBusy(true); setError(""); setSuccess(""); try { await complaintApi.create({ tenancyId: String(form.get("tenancyId")), title: String(form.get("title")), description: String(form.get("description")), category: String(form.get("category")) as ComplaintCategory }); element.reset(); setSuccess("Your maintenance request was submitted."); await load(); } catch (e) { setError(messageOf(e)); } finally { setBusy(false); } }
+  async function comment(id: string, message: string) { try { await complaintApi.tenantComment(id, message); setSuccess("Follow-up added."); await load(); } catch (e) { setError(messageOf(e)); } }
+  if (!user || user.role !== "TENANT") return <AccessMessage />;
+  return <main className="mx-auto max-w-5xl px-5 py-10 sm:px-8"><Link to="/" className="text-sm font-semibold text-teal-800">← Browse properties</Link><h1 className="mt-4 text-3xl font-bold">Maintenance requests</h1><p className="mt-2 text-slate-600">Submit an issue for your current stay and follow its progress.</p>
+    {error && <Alert>{error}</Alert>}{success && <p role="status" className="mt-5 rounded-xl bg-emerald-50 p-3 text-sm text-emerald-800">{success}</p>}
+    <section className={`${card} mt-6`}><h2 className="text-xl font-bold">New request</h2>{tenancies.length === 0 ? <p className="mt-3 text-sm text-slate-600">A current active tenancy is required to submit a request.</p> : <form className="mt-4 grid gap-4 sm:grid-cols-2" onSubmit={submit}>
+      <label className="text-sm font-medium sm:col-span-2">Current stay<select className={field} name="tenancyId" required>{tenancies.map((t) => <option key={t.id} value={t.id}>{t.bed.room.property.name} · Room {t.bed.room.roomNumber}, bed {t.bed.label}</option>)}</select></label>
+      <label className="text-sm font-medium">Category<select className={field} name="category">{categories.map((c) => <option key={c} value={c}>{label(c)}</option>)}</select></label>
+      <label className="text-sm font-medium">Title<input className={field} name="title" required minLength={3} maxLength={160} /></label>
+      <label className="text-sm font-medium sm:col-span-2">Describe the issue<textarea className={field} name="description" required minLength={10} maxLength={10000} rows={4} /></label><button className={button} disabled={busy}>{busy ? "Submitting…" : "Submit request"}</button>
+    </form>}</section>
+    {loading ? <p className="py-10 text-slate-500" aria-live="polite">Loading requests…</p> : items.length === 0 ? <Empty title="No requests yet" body="Requests you submit will appear here." /> : <div className="mt-6 grid gap-4">{items.map((item) => <ComplaintCard key={item.id} item={item} onComment={comment} owner={false} />)}</div>}
+  </main>;
+}
+
+export function OwnerMaintenancePage({ user }: { user: AuthUser | null }) {
+  const [items, setItems] = useState<Complaint[]>([]); const [status, setStatus] = useState(""); const [priority, setPriority] = useState(""); const [loading, setLoading] = useState(true); const [error, setError] = useState(""); const [success, setSuccess] = useState("");
+  const load = useCallback(async () => { setLoading(true); setError(""); try { const result = await complaintApi.ownerList({ status: (status || undefined) as ComplaintStatus | undefined, priority: (priority || undefined) as ComplaintPriority | undefined }); setItems(result.complaints); } catch (e) { setError(messageOf(e)); } finally { setLoading(false); } }, [status, priority]);
+  useEffect(() => { if (user && (user.role === "OWNER" || user.role === "ADMIN")) void load(); }, [user, load]);
+  async function update(id: string, value: Parameters<typeof complaintApi.update>[1]) { setError(""); setSuccess(""); try { await complaintApi.update(id, value); setSuccess("Request updated."); await load(); } catch (e) { setError(messageOf(e)); } }
+  async function comment(id: string, message: string) { try { await complaintApi.ownerComment(id, message); setSuccess("Progress note added."); await load(); } catch (e) { setError(messageOf(e)); } }
+  if (!user || !["OWNER", "ADMIN"].includes(user.role)) return <AccessMessage />;
+  return <main className="mx-auto max-w-7xl px-5 py-10 sm:px-8"><Link to="/manage" className="text-sm font-semibold text-teal-800">← Owner dashboard</Link><h1 className="mt-4 text-3xl font-bold">Maintenance dashboard</h1><p className="mt-2 text-slate-600">Review and manage requests for your properties.</p>
+    {error && <Alert>{error}</Alert>}{success && <p role="status" className="mt-5 rounded-xl bg-emerald-50 p-3 text-sm text-emerald-800">{success}</p>}
+    <div className="mt-6 flex flex-wrap gap-3"><label className="text-sm font-medium">Status<select className="ml-2 rounded-xl border border-slate-300 bg-white px-3 py-2" value={status} onChange={(e) => setStatus(e.target.value)}><option value="">All statuses</option>{statuses.map((s) => <option key={s}>{s}</option>)}</select></label><label className="text-sm font-medium">Priority<select className="ml-2 rounded-xl border border-slate-300 bg-white px-3 py-2" value={priority} onChange={(e) => setPriority(e.target.value)}><option value="">All priorities</option>{priorities.map((p) => <option key={p}>{p}</option>)}</select></label></div>
+    {loading ? <p className="py-10 text-slate-500" aria-live="polite">Loading requests…</p> : items.length === 0 ? <Empty title="No matching requests" body="Requests matching these filters will appear here." /> : <div className="mt-5 grid gap-4">{items.map((item) => <ComplaintCard key={item.id} item={item} owner onComment={comment} onUpdate={update} />)}</div>}
+  </main>;
+}
+
+function ComplaintCard({ item, owner, onComment, onUpdate }: { item: Complaint; owner: boolean; onComment: (id: string, message: string) => Promise<void>; onUpdate?: (id: string, value: Parameters<typeof complaintApi.update>[1]) => Promise<void> }) {
+  const [note, setNote] = useState(""); const [resolution, setResolution] = useState(item.resolutionNote ?? ""); const [busy, setBusy] = useState(false);
+  async function submitNote(e: FormEvent) { e.preventDefault(); if (!note.trim()) return; setBusy(true); await onComment(item.id, note.trim()); setNote(""); setBusy(false); }
+  async function transition(next: ComplaintStatus) { setBusy(true); await onUpdate?.(item.id, { status: next, ...(next === "RESOLVED" ? { resolutionNote: resolution.trim() } : {}) }); setBusy(false); }
+  return <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-semibold uppercase tracking-wide text-teal-800">{label(item.category)} · {item.property.name}</p><h2 className="mt-1 text-xl font-bold">{item.title}</h2><p className="mt-1 text-sm text-slate-500">{item.property.city}, {item.property.region} · {item.room ? `Room ${item.room.roomNumber}` : "Common area"}{item.bed ? ` · Bed ${item.bed.label}` : ""}</p>{owner && <p className="mt-1 text-sm text-slate-500">Tenant: {item.tenant.fullName}</p>}</div><div className="flex gap-2"><Badge>{label(item.status)}</Badge><Badge>{label(item.priority)}</Badge></div></div><p className="mt-4 whitespace-pre-wrap text-sm leading-6 text-slate-700">{item.description}</p>{item.resolutionNote && <p className="mt-3 rounded-xl bg-emerald-50 p-3 text-sm text-emerald-900"><strong>Resolution:</strong> {item.resolutionNote}</p>}
+    {owner && onUpdate && item.status !== "CLOSED" && <div className="mt-4 flex flex-wrap items-end gap-3">{item.status === "OPEN" && <button className={secondary} disabled={busy} onClick={() => void transition("IN_PROGRESS")}>Start work</button>}{item.status === "IN_PROGRESS" && <><label className="min-w-56 flex-1 text-sm font-medium">Resolution note<input className={field} value={resolution} onChange={(e) => setResolution(e.target.value)} required /></label><button className={button} disabled={busy || !resolution.trim()} onClick={() => void transition("RESOLVED")}>Mark resolved</button></>}{item.status === "RESOLVED" && <><button className={secondary} disabled={busy} onClick={() => void transition("IN_PROGRESS")}>Reopen</button><button className={button} disabled={busy} onClick={() => void transition("CLOSED")}>Close request</button></>}<label className="text-sm font-medium">Priority<select className="ml-2 rounded-xl border border-slate-300 px-2 py-2" value={item.priority} onChange={(e) => void onUpdate(item.id, { priority: e.target.value as ComplaintPriority })}>{priorities.map((p) => <option key={p}>{p}</option>)}</select></label></div>}
+    <details className="mt-5 border-t border-slate-100 pt-4"><summary className="cursor-pointer text-sm font-semibold text-slate-700">Progress history ({item.activities.length})</summary><ol className="mt-3 space-y-3">{item.activities.map((a) => <li key={a.id} className="border-l-2 border-teal-200 pl-3 text-sm"><p className="font-medium">{a.author.fullName} · {label(a.type)}</p>{a.message && <p className="mt-0.5 text-slate-600">{a.message}</p>}{a.toStatus && <p className="text-slate-600">{label(a.fromStatus ?? "")} → {label(a.toStatus)}</p>}{a.toPriority && <p className="text-slate-600">{label(a.fromPriority ?? "")} → {label(a.toPriority)}</p>}<time className="text-xs text-slate-400">{new Date(a.createdAt).toLocaleString()}</time></li>)}</ol></details>
+    {item.status !== "CLOSED" && <form className="mt-4 flex flex-col gap-2 sm:flex-row" onSubmit={submitNote}><input className={field} value={note} onChange={(e) => setNote(e.target.value)} aria-label="Progress note" placeholder={owner ? "Add a progress note" : "Add a follow-up"} maxLength={2000} required /><button className={secondary} disabled={busy}>Add note</button></form>}
+  </article>;
+}
+function Badge({ children }: { children: string }) { return <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">{children}</span>; }
+function Alert({ children }: { children: string }) { return <p role="alert" className="mt-5 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-800">{children}</p>; }
+function Empty({ title, body }: { title: string; body: string }) { return <div className="mt-6 rounded-2xl border border-dashed border-slate-300 p-8 text-center"><h2 className="font-semibold">{title}</h2><p className="mt-2 text-sm text-slate-500">{body}</p></div>; }
+function AccessMessage() { return <main className="mx-auto max-w-3xl px-5 py-16 text-center"><h1 className="text-2xl font-bold">Sign in with an authorized account to view requests.</h1><Link className={`${button} mt-5`} to="/login">Sign in</Link></main>; }

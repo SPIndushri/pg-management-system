@@ -81,7 +81,9 @@ describe.skipIf(!enabled)("PostgreSQL invoice/payment integration", () => {
     expect(replay.kind).toBe("replayed");
     const summary = await repository.ownerInvoice(invoiceId) as { amountPaid: string; balanceDue: string; payments: unknown[] };
     expect(summary.amountPaid).toBe((accepted.invoice as { amountPaid: string }).amountPaid);
-    expect(summary.balanceDue).toBe("40.00");
+    // Either request can acquire the invoice lock first; verify the stored balance
+    // matches the one accepted amount instead of assuming which concurrent call wins.
+    expect(summary.balanceDue).toBe((accepted.invoice as { balanceDue: string }).balanceDue);
     expect(summary.payments).toHaveLength(1);
   });
 });

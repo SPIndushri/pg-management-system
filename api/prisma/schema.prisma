@@ -81,6 +81,22 @@ enum ComplaintPriority {
   URGENT
 }
 
+enum ComplaintCategory {
+  PLUMBING
+  ELECTRICAL
+  CLEANING
+  WIFI
+  FURNITURE
+  OTHER
+}
+
+enum ComplaintActivityType {
+  CREATED
+  COMMENT
+  STATUS_CHANGE
+  PRIORITY_CHANGE
+}
+
 model User {
   id           String   @id @default(uuid()) @db.Uuid
   email        String   @unique @db.VarChar(320)
@@ -95,6 +111,7 @@ model User {
   bookings        Booking[]      @relation("BookingTenant")
   tenancies       Tenancy[]      @relation("TenancyTenant")
   complaints      Complaint[]    @relation("ComplaintTenant")
+  complaintActivities ComplaintActivity[] @relation("ComplaintActivityAuthor")
   notifications   Notification[]
   authSessions    AuthSession[]
 
@@ -135,6 +152,7 @@ model Room {
 
   property Property @relation(fields: [propertyId], references: [id], onDelete: Restrict)
   beds     Bed[]
+  complaintRequests Complaint[] @relation("ComplaintRoom")
 
   @@unique([propertyId, roomNumber])
   @@index([propertyId, status])
@@ -151,6 +169,7 @@ model Bed {
   room      Room      @relation(fields: [roomId], references: [id], onDelete: Restrict)
   bookings  Booking[]
   tenancies Tenancy[]
+  complaintRequests Complaint[] @relation("ComplaintBed")
 
   @@unique([roomId, label])
   @@index([roomId, status])
@@ -191,6 +210,7 @@ model Tenancy {
   bed      Bed           @relation(fields: [bedId], references: [id], onDelete: Restrict)
   booking  Booking?      @relation(fields: [bookingId], references: [id], onDelete: Restrict)
   invoices RentInvoice[]
+  complaints Complaint[]
 
   @@index([tenantId, status])
   @@index([bedId, status, startDate, endDate])
@@ -241,16 +261,49 @@ model Complaint {
   propertyId  String            @db.Uuid
   title       String            @db.VarChar(160)
   description String            @db.Text
+  category    ComplaintCategory @default(OTHER)
   priority    ComplaintPriority @default(NORMAL)
   status      ComplaintStatus   @default(OPEN)
+  roomId      String?           @db.Uuid
+  bedId       String?           @db.Uuid
+  tenancyId   String?           @db.Uuid
+  resolutionNote String?        @db.Text
+  resolvedAt  DateTime?         @db.Timestamptz(6)
+  closedAt    DateTime?         @db.Timestamptz(6)
   createdAt   DateTime          @default(now()) @db.Timestamptz(6)
   updatedAt   DateTime          @updatedAt @db.Timestamptz(6)
 
   tenant   User     @relation("ComplaintTenant", fields: [tenantId], references: [id], onDelete: Restrict)
   property Property @relation("ComplaintProperty", fields: [propertyId], references: [id], onDelete: Restrict)
+  room Room? @relation("ComplaintRoom", fields: [roomId], references: [id], onDelete: Restrict)
+  bed Bed? @relation("ComplaintBed", fields: [bedId], references: [id], onDelete: Restrict)
+  tenancy Tenancy? @relation(fields: [tenancyId], references: [id], onDelete: Restrict)
+  activities ComplaintActivity[]
 
   @@index([tenantId, status])
   @@index([propertyId, status, createdAt])
+  @@index([roomId])
+  @@index([bedId])
+  @@index([tenancyId])
+}
+
+model ComplaintActivity {
+  id           String                 @id @default(uuid()) @db.Uuid
+  complaintId  String                 @db.Uuid
+  authorId     String                 @db.Uuid
+  type         ComplaintActivityType
+  message      String?                @db.VarChar(2000)
+  fromStatus   ComplaintStatus?
+  toStatus     ComplaintStatus?
+  fromPriority ComplaintPriority?
+  toPriority   ComplaintPriority?
+  createdAt    DateTime               @default(now()) @db.Timestamptz(6)
+
+  complaint Complaint @relation(fields: [complaintId], references: [id], onDelete: Restrict)
+  author    User      @relation("ComplaintActivityAuthor", fields: [authorId], references: [id], onDelete: Restrict)
+
+  @@index([complaintId, createdAt])
+  @@index([authorId, createdAt])
 }
 
 model Notification {

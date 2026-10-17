@@ -4,7 +4,7 @@ A portfolio project for managing paying guest accommodations. The web app and fu
 
 ## Project status
 
-Phases 1 and 2 provide the web/API foundations and initial PostgreSQL schema. Phase 3 adds registration, login, cookie-backed sessions, logout, current-user lookup, validation, rate limiting, and reusable authorization middleware. Phase 4A adds property, room and bed management plus public property browsing. Phase 4B adds tenant booking requests and owner decisions. Phase 4C adds booking check-in and tenancy lifecycle features. Phase 4D adds rent invoices and manually recorded payments; gateway integration, complaints, notifications, and Flutter remain deferred.
+Phases 1 and 2 provide the web/API foundations and initial PostgreSQL schema. Phase 3 adds registration, login, cookie-backed sessions, logout, current-user lookup, validation, rate limiting, and reusable authorization middleware. Phase 4A adds property, room and bed management plus public property browsing. Phase 4B adds tenant booking requests and owner decisions. Phase 4C adds booking check-in and tenancy lifecycle features. Phase 4D adds rent invoices and manually recorded payments. Phase 4E adds tenant complaints and owner maintenance workflows; notifications and Flutter remain deferred.
 
 ## Prerequisites
 
@@ -230,6 +230,33 @@ The owner rent interface is at `/manage/rent`; tenant billing is at `/billing`. 
 
 The PostgreSQL integration suite also checks duplicate billing periods, partial/full payments, exact balances, idempotent retries and concurrent overpayment attempts. Enable it with `RUN_DB_INTEGRATION_TESTS=1` using the PowerShell instructions above.
 
+## Complaints and maintenance requests (Phase 4E)
+
+Tenants can report a maintenance issue only while they have a current `ACTIVE` tenancy. The server derives the tenant and property from that tenancy; an optional room or bed must be the tenancy's own room/bed. Existing complaints are retained, and the forward-only migration `20261017180000_complaints_maintenance` adds categories, optional room/bed/tenancy links, resolution metadata, and an append-only activity history. The five previous migrations, including `btree_gist` and the booking/active-tenancy exclusion constraints, are unchanged.
+
+Categories are `PLUMBING`, `ELECTRICAL`, `CLEANING`, `WIFI`, `FURNITURE`, and `OTHER`. Priorities are `LOW`, `NORMAL`, `HIGH`, and `URGENT`. The lifecycle is `OPEN → IN_PROGRESS → RESOLVED → CLOSED`; a resolved request may be reopened to `IN_PROGRESS`. `CLOSED` is terminal. Resolving requires a resolution note; resolution and closing timestamps are recorded. Repeating a status or priority value is an idempotent no-op. Status/priority changes and comments add activity rows with the authenticated actor and timestamp.
+
+| Method and path | Permission | Purpose |
+| --- | --- | --- |
+| `POST /api/v1/complaints` | Tenant + CSRF | Create against a current tenancy; accepts `tenancyId`, optional matching `roomId`/`bedId`, title, description and category. |
+| `GET /api/v1/complaints` | Tenant | List only the signed-in tenant's requests; optional `status` filter. |
+| `GET /api/v1/complaints/:complaintId` | Tenant | Read only the signed-in tenant's request. |
+| `POST /api/v1/complaints/:complaintId/activities` | Owning tenant + CSRF | Add a follow-up comment. |
+| `GET /api/v1/owner/complaints` | Owner/Admin | List requests for owned properties; admins see all. Optional `status`, `priority`, and `propertyId` filters. |
+| `GET /api/v1/owner/complaints/:complaintId` | Property owner/Admin | Read a request and its progress history. |
+| `PATCH /api/v1/owner/complaints/:complaintId` | Property owner/Admin + CSRF | Change status/priority, supply a resolution note, or add an audit note. |
+| `POST /api/v1/owner/complaints/:complaintId/activities` | Property owner/Admin + CSRF | Add a progress note. |
+
+Owners are scoped to their own property records. Admins follow the existing all-property policy. Foreign tenant/owner IDs are concealed with `404`; role checks and CSRF validation are enforced server-side. Tenant requests cannot set status, priority, creator or ownership fields. Creation share-locks the tenancy row until the request and creation audit event commit, preventing a concurrent check-out from invalidating the tenancy between validation and insert. Owner status/priority changes lock the complaint row and append their audit entries in one transaction, so concurrent updates cannot race their transition checks. The tenant page is `/complaints`; the owner dashboard is `/manage/maintenance`.
+
+The PostgreSQL integration suite includes a complaint persistence check. Run all database-backed integration checks only after reviewing/applying migrations and configuring the local test database:
+
+```powershell
+$env:RUN_DB_INTEGRATION_TESTS = '1'
+npm run test:integration
+Remove-Item Env:RUN_DB_INTEGRATION_TESTS
+```
+
 ## Checks
 
 ```powershell
@@ -237,7 +264,7 @@ npm test
 npm run build
 ```
 
-Vitest/Supertest tests cover health, authentication/session security, role and ownership authorization, property/room/bed endpoints, booking and tenancy lifecycles, invoice/payment validation and access isolation, balances, overpayments and retries. The standard API suite uses in-memory repositories; the optional booking and billing integration suites require the configured PostgreSQL database. Prisma Client generation is `npm run db:generate`; migrations are applied with `npm run db:migrate` in development or `npx prisma migrate deploy --schema=prisma/schema.prisma` from `api/` when applying reviewed migrations without creating new ones. The web workspace has a production build but no configured automated test script.
+Vitest/Supertest tests cover health, authentication/session security, role and ownership authorization, property/room/bed endpoints, booking and tenancy lifecycles, invoice/payment validation and access isolation, complaint lifecycle and audit events, balances, overpayments and retries. The standard API suite uses in-memory repositories; the optional booking, billing and complaints integration suites require the configured PostgreSQL database. Prisma Client generation is `npm run db:generate`; migrations are applied with `npm run db:migrate` in development or `npx prisma migrate deploy --schema=prisma/schema.prisma` from `api/` when applying reviewed migrations without creating new ones. The web workspace has a production build but no configured automated test script.
 
 ## Architecture notes
 
@@ -250,6 +277,5 @@ Vitest/Supertest tests cover health, authentication/session security, role and o
 
 ## Next phases
 
-1. Add complaint workflows with owner/tenant scoping.
-2. Add server-verified payment-provider integration.
-3. Add notification delivery, Flutter app, deployment guidance, and broader test coverage.
+1. Add server-verified payment-provider integration.
+2. Add notification delivery, Flutter app, deployment guidance, and broader test coverage.
