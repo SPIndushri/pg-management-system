@@ -4,6 +4,7 @@ import type { Response as SupertestResponse } from "supertest";
 import { beforeEach, describe, expect, it } from "vitest";
 import { createApp } from "../app.js";
 import { argon2PasswordHasher } from "./password.js";
+import { hashOpaqueToken } from "./service.js";
 import type { AuthRepository, AuthUserRecord, AuthenticatedSession, NewSession, PublicUser } from "./types.js";
 
 const webOrigin = "http://localhost:5173";
@@ -173,6 +174,20 @@ describe("authentication API", () => {
 
     const afterLogout = await request(app).get("/api/v1/auth/me").set("Cookie", cookies);
     expect(afterLogout.status).toBe(401);
+  });
+
+  it("rejects an expired session even when the cookie is still presented", async () => {
+    const registered = await registerAccount(app);
+    const cookies = sessionCookies(registered);
+    const token = cookies.match(/pg_session=([^;]+)/)?.[1];
+    expect(token).toBeTruthy();
+    const session = repository.sessions.get(hashOpaqueToken(token!));
+    expect(session).toBeTruthy();
+    session!.expiresAt = new Date(Date.now() - 1_000);
+
+    const response = await request(app).get("/api/v1/auth/me").set("Cookie", cookies);
+    expect(response.status).toBe(401);
+    expect(response.body.error.code).toBe("UNAUTHENTICATED");
   });
 
   it("rate limits repeated login attempts", async () => {
