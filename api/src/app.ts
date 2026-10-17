@@ -27,6 +27,9 @@ import { BillingService, type BillingRepository } from "./billing/service.js";
 import { createPrismaComplaintRepository } from "./complaints/prisma-repository.js";
 import { createComplaintRouter } from "./complaints/routes.js";
 import { ComplaintService, type ComplaintRepository } from "./complaints/service.js";
+import { createDashboardRouter } from "./dashboard/routes.js";
+import { createPrismaDashboardRepository } from "./dashboard/prisma-repository.js";
+import { DashboardService, type DashboardRepository } from "./dashboard/service.js";
 
 interface CreateAppOptions {
   authRepository?: AuthRepository;
@@ -43,6 +46,7 @@ interface CreateAppOptions {
   invoiceAccess?: (invoiceId: string) => Promise<TenantRecordAccess | null>;
   complaintRepository?: ComplaintRepository;
   complaintAccess?: (complaintId: string) => Promise<TenantRecordAccess | null>;
+  dashboardRepository?: DashboardRepository;
 }
 
 export function createApp(options: CreateAppOptions = {}) {
@@ -92,6 +96,10 @@ export function createApp(options: CreateAppOptions = {}) {
     new ComplaintService(options.complaintRepository ?? createPrismaComplaintRepository(prisma)),
     authRepository,
     options.complaintAccess ?? ((complaintId) => prismaResourceAccess.findComplaintAccess(complaintId)),
+  ));
+  app.use("/api/v1", createDashboardRouter(
+    new DashboardService(options.dashboardRepository ?? createPrismaDashboardRepository(prisma)),
+    authRepository,
   ));
   app.use((_request, response) => {
     response.status(404).json({ error: { code: "NOT_FOUND", message: "Route not found." } });

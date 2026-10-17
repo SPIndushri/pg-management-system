@@ -4,7 +4,7 @@ A portfolio project for managing paying guest accommodations. The web app and fu
 
 ## Project status
 
-Phases 1 and 2 provide the web/API foundations and initial PostgreSQL schema. Phase 3 adds registration, login, cookie-backed sessions, logout, current-user lookup, validation, rate limiting, and reusable authorization middleware. Phase 4A adds property, room and bed management plus public property browsing. Phase 4B adds tenant booking requests and owner decisions. Phase 4C adds booking check-in and tenancy lifecycle features. Phase 4D adds rent invoices and manually recorded payments. Phase 4E adds tenant complaints and owner maintenance workflows; notifications and Flutter remain deferred.
+Phases 1 and 2 provide the web/API foundations and initial PostgreSQL schema. Phase 3 adds registration, login, cookie-backed sessions, logout, current-user lookup, validation, rate limiting, and reusable authorization middleware. Phase 4A adds property, room and bed management plus public property browsing. Phase 4B adds tenant booking requests and owner decisions. Phase 4C adds booking check-in and tenancy lifecycle features. Phase 4D adds rent invoices and manually recorded payments. Phase 4E adds tenant complaints and owner maintenance workflows. Phase 4F adds role-aware dashboards and date-filtered reports; notifications and Flutter remain deferred.
 
 ## Prerequisites
 
@@ -257,6 +257,31 @@ npm run test:integration
 Remove-Item Env:RUN_DB_INTEGRATION_TESTS
 ```
 
+## Dashboards and reports (Phase 4F)
+
+`GET /api/v1/dashboard` requires a signed-in tenant, owner, or admin session and returns role-specific data. Owners see only their property records; admins use the existing all-property policy; tenants see only their own bookings, active tenancies, invoices, recorded payments, and complaints. The UI routes are `/manage` for owners/admins and `/dashboard` for tenants. The date inputs accept inclusive `from` and `to` dates (`YYYY-MM-DD`); both default to the most recent 30 calendar days through today, and reversed or malformed ranges are rejected.
+
+| Report value | Definition |
+| --- | --- |
+| Booking status counts | Booking requests created within the selected date range, grouped by current status. The owner view also shows up to six pending requests in that range. |
+| Property, room, bed and tenancy summaries | Current portfolio snapshot, independent of the selected date range. Tenancies are grouped by current status. |
+| Invoice amount issued | Non-draft, non-void invoice face amounts created within the selected range, grouped by invoice currency. |
+| Outstanding and overdue balances | Current snapshot across all non-draft/non-void invoices, computed as invoice amount less successful recorded payments, clamped at zero, and grouped by currency. Overdue uses due date before the current UTC day and a positive remaining balance. |
+| Recorded payment amount and history | Successful manual payment entries whose recorded date falls within the selected range, grouped by currency; the dashboard shows up to six recent entries. These are owner/admin-entered records, not gateway-verified transactions. |
+| Maintenance summary | Current OPEN and IN_PROGRESS request counts and up to six most recently updated matching requests. |
+
+Tenant dashboards show their active tenancy snapshot, up to six nearest outstanding invoices with server-computed balances, payment history in the selected range, booking counts/history in that range, and up to six open/in-progress complaint updates. Lists are bounded and monetary aggregates are calculated in PostgreSQL/Prisma Decimal on the server. No schema or migration changes were required.
+
+Run `npm test` and `npm run build` from the repository root. Database-backed integration tests (booking, billing, complaints, and dashboard aggregation/owner isolation) require the configured PostgreSQL database:
+
+```powershell
+$env:RUN_DB_INTEGRATION_TESTS = '1'
+npm run test:integration
+Remove-Item Env:RUN_DB_INTEGRATION_TESTS
+```
+
+There is no web test script configured; the web workspace is verified with its TypeScript/Vite production build.
+
 ## Checks
 
 ```powershell
@@ -264,7 +289,7 @@ npm test
 npm run build
 ```
 
-Vitest/Supertest tests cover health, authentication/session security, role and ownership authorization, property/room/bed endpoints, booking and tenancy lifecycles, invoice/payment validation and access isolation, complaint lifecycle and audit events, balances, overpayments and retries. The standard API suite uses in-memory repositories; the optional booking, billing and complaints integration suites require the configured PostgreSQL database. Prisma Client generation is `npm run db:generate`; migrations are applied with `npm run db:migrate` in development or `npx prisma migrate deploy --schema=prisma/schema.prisma` from `api/` when applying reviewed migrations without creating new ones. The web workspace has a production build but no configured automated test script.
+Vitest/Supertest tests cover health, authentication/session security, role and ownership authorization, property/room/bed endpoints, booking and tenancy lifecycles, invoice/payment validation and access isolation, complaint lifecycle and audit events, dashboard role isolation, balances, overpayments and retries. The standard API suite uses in-memory repositories; the optional booking, billing, complaints and dashboard aggregate integration suites require the configured PostgreSQL database. Prisma Client generation is `npm run db:generate`; migrations are applied with `npm run db:migrate` in development or `npx prisma migrate deploy --schema=prisma/schema.prisma` from `api/` when applying reviewed migrations without creating new ones. The web workspace has a production build but no configured automated test script.
 
 ## Architecture notes
 
