@@ -1,0 +1,269 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  ADMIN
+  OWNER
+  TENANT
+}
+
+enum PropertyStatus {
+  DRAFT
+  ACTIVE
+  INACTIVE
+}
+
+enum RoomStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum BedStatus {
+  AVAILABLE
+  MAINTENANCE
+  INACTIVE
+}
+
+enum BookingStatus {
+  PENDING
+  CONFIRMED
+  REJECTED
+  CANCELLED
+}
+
+enum TenancyStatus {
+  ACTIVE
+  ENDED
+  CANCELLED
+}
+
+enum InvoiceStatus {
+  DRAFT
+  ISSUED
+  PAID
+  OVERDUE
+  VOID
+}
+
+enum PaymentStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+  REFUNDED
+}
+
+enum ComplaintStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+}
+
+enum ComplaintPriority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+model User {
+  id           String   @id @default(uuid()) @db.Uuid
+  email        String   @unique @db.VarChar(320)
+  passwordHash String   @db.VarChar(255)
+  fullName     String   @db.VarChar(160)
+  phone        String?  @db.VarChar(32)
+  role         UserRole @default(TENANT)
+  createdAt    DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime @updatedAt @db.Timestamptz(6)
+
+  ownedProperties Property[]     @relation("PropertyOwner")
+  bookings        Booking[]      @relation("BookingTenant")
+  tenancies       Tenancy[]      @relation("TenancyTenant")
+  complaints      Complaint[]    @relation("ComplaintTenant")
+  notifications   Notification[]
+  authSessions    AuthSession[]
+
+  @@index([role])
+}
+
+model Property {
+  id           String         @id @default(uuid()) @db.Uuid
+  ownerId      String         @db.Uuid
+  name         String         @db.VarChar(160)
+  description  String?        @db.Text
+  addressLine1 String         @db.VarChar(200)
+  addressLine2 String?        @db.VarChar(200)
+  city         String         @db.VarChar(120)
+  region       String         @db.VarChar(120)
+  postalCode   String         @db.VarChar(24)
+  countryCode  String         @db.Char(2)
+  status       PropertyStatus @default(DRAFT)
+  createdAt    DateTime       @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime       @updatedAt @db.Timestamptz(6)
+
+  owner      User        @relation("PropertyOwner", fields: [ownerId], references: [id], onDelete: Restrict)
+  rooms      Room[]
+  complaints Complaint[] @relation("ComplaintProperty")
+
+  @@index([ownerId, status])
+  @@index([city, status])
+}
+
+model Room {
+  id         String     @id @default(uuid()) @db.Uuid
+  propertyId String     @db.Uuid
+  roomNumber String     @db.VarChar(40)
+  floor      Int?
+  status     RoomStatus @default(ACTIVE)
+  createdAt  DateTime   @default(now()) @db.Timestamptz(6)
+  updatedAt  DateTime   @updatedAt @db.Timestamptz(6)
+
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Restrict)
+  beds     Bed[]
+
+  @@unique([propertyId, roomNumber])
+  @@index([propertyId, status])
+}
+
+model Bed {
+  id        String    @id @default(uuid()) @db.Uuid
+  roomId    String    @db.Uuid
+  label     String    @db.VarChar(40)
+  status    BedStatus @default(AVAILABLE)
+  createdAt DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @db.Timestamptz(6)
+
+  room      Room      @relation(fields: [roomId], references: [id], onDelete: Restrict)
+  bookings  Booking[]
+  tenancies Tenancy[]
+
+  @@unique([roomId, label])
+  @@index([roomId, status])
+}
+
+model Booking {
+  id        String        @id @default(uuid()) @db.Uuid
+  tenantId  String        @db.Uuid
+  bedId     String        @db.Uuid
+  startDate DateTime      @db.Date
+  endDate   DateTime?     @db.Date
+  status    BookingStatus @default(PENDING)
+  createdAt DateTime      @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime      @updatedAt @db.Timestamptz(6)
+
+  tenant User @relation("BookingTenant", fields: [tenantId], references: [id], onDelete: Restrict)
+  bed    Bed  @relation(fields: [bedId], references: [id], onDelete: Restrict)
+  tenancy Tenancy?
+
+  @@index([tenantId, status])
+  @@index([bedId, status, startDate, endDate])
+}
+
+model Tenancy {
+  id        String        @id @default(uuid()) @db.Uuid
+  tenantId  String        @db.Uuid
+  bedId     String        @db.Uuid
+  startDate DateTime      @db.Date
+  endDate   DateTime?     @db.Date
+  status    TenancyStatus @default(ACTIVE)
+  bookingId String?       @unique @db.Uuid
+  checkedInAt DateTime?   @db.Timestamptz(6)
+  checkedOutAt DateTime?  @db.Timestamptz(6)
+  createdAt DateTime      @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime      @updatedAt @db.Timestamptz(6)
+
+  tenant   User          @relation("TenancyTenant", fields: [tenantId], references: [id], onDelete: Restrict)
+  bed      Bed           @relation(fields: [bedId], references: [id], onDelete: Restrict)
+  booking  Booking?      @relation(fields: [bookingId], references: [id], onDelete: Restrict)
+  invoices RentInvoice[]
+
+  @@index([tenantId, status])
+  @@index([bedId, status, startDate, endDate])
+}
+
+model RentInvoice {
+  id           String        @id @default(uuid()) @db.Uuid
+  tenancyId    String        @db.Uuid
+  periodStart  DateTime      @db.Date
+  periodEnd    DateTime      @db.Date
+  dueDate      DateTime      @db.Date
+  amount       Decimal       @db.Decimal(12, 2)
+  currencyCode String        @db.Char(3)
+  status       InvoiceStatus @default(DRAFT)
+  createdAt    DateTime      @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime      @updatedAt @db.Timestamptz(6)
+
+  tenancy  Tenancy   @relation(fields: [tenancyId], references: [id], onDelete: Restrict)
+  payments Payment[]
+
+  @@unique([tenancyId, periodStart])
+  @@index([status, dueDate])
+}
+
+model Payment {
+  id                String        @id @default(uuid()) @db.Uuid
+  invoiceId         String        @db.Uuid
+  amount            Decimal       @db.Decimal(12, 2)
+  currencyCode      String        @db.Char(3)
+  status            PaymentStatus @default(PENDING)
+  providerReference String?       @unique @db.VarChar(200)
+  recordedAt        DateTime?     @db.Timestamptz(6)
+  createdAt         DateTime      @default(now()) @db.Timestamptz(6)
+  updatedAt         DateTime      @updatedAt @db.Timestamptz(6)
+
+  invoice RentInvoice @relation(fields: [invoiceId], references: [id], onDelete: Restrict)
+
+  @@index([invoiceId, status])
+}
+
+model Complaint {
+  id          String            @id @default(uuid()) @db.Uuid
+  tenantId    String            @db.Uuid
+  propertyId  String            @db.Uuid
+  title       String            @db.VarChar(160)
+  description String            @db.Text
+  priority    ComplaintPriority @default(NORMAL)
+  status      ComplaintStatus   @default(OPEN)
+  createdAt   DateTime          @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime          @updatedAt @db.Timestamptz(6)
+
+  tenant   User     @relation("ComplaintTenant", fields: [tenantId], references: [id], onDelete: Restrict)
+  property Property @relation("ComplaintProperty", fields: [propertyId], references: [id], onDelete: Restrict)
+
+  @@index([tenantId, status])
+  @@index([propertyId, status, createdAt])
+}
+
+model Notification {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @db.Uuid
+  title     String    @db.VarChar(160)
+  body      String    @db.Text
+  readAt    DateTime? @db.Timestamptz(6)
+  createdAt DateTime  @default(now()) @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([userId, readAt, createdAt])
+}
+
+model AuthSession {
+  id            String    @id @default(uuid()) @db.Uuid
+  userId        String    @db.Uuid
+  tokenHash     String    @unique @db.Char(64)
+  csrfTokenHash String    @db.Char(64)
+  expiresAt     DateTime  @db.Timestamptz(6)
+  revokedAt     DateTime? @db.Timestamptz(6)
+  createdAt     DateTime  @default(now()) @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([userId, expiresAt])
+  @@index([expiresAt])
+}

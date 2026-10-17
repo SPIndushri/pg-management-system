@@ -1,0 +1,28 @@
+{
+  "name": "pg-management-system",
+  "private": true,
+  "workspaces": [
+    "api",
+    "web"
+  ],
+  "scripts": {
+    "dev": "concurrently -n api,web -c blue,green \"npm:dev:api\" \"npm:dev:web\"",
+    "dev:api": "npm --workspace api run dev",
+    "dev:web": "npm --workspace web run dev",
+    "build": "npm run build --workspace api && npm run build --workspace web",
+    "test": "npm run test --workspace api",
+    "test:integration": "npm run test:integration --workspace api",
+    "db:generate": "npm run prisma:generate --workspace api",
+    "db:migrate": "npm --workspace api run prisma:migrate --"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  },
+  "allowScripts": {
+    "esbuild": true,
+    "@prisma/client": true,
+    "@prisma/engines": true,
+    "prisma": true,
+    "argon2@0.45.1": true
+  }
+}
